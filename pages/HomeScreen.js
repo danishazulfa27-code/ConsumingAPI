@@ -1,205 +1,217 @@
-import React, { useState, useEffect, useMemo, useRef, useContext } from "react";
-import {
-  View,
-  Text,
-  SafeAreaView,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  TextInput,
-  ActivityIndicator,
-} from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
-import { AuthContext } from "../context/AuthContext";
+import React, { useState } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  Alert, 
+  Button 
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
-const HomeScreen = ({ navigation }) => {
-  const { userData, logout } = useContext(AuthContext);
+export default function HomeScreen() {
+
+  const navigation = useNavigation();
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scannedData, setScannedData] = useState(null);
+  const [isScanning, setIsScanning] = useState(true);
   const [isCheckedIn, setIsCheckedIn] = useState(false);
-  const [currentTime, setCurrentTime] = useState("Memuat jam...");
-  const [note, setNote] = useState("");
-  const [isPosting, setIsPosting] = useState(false); 
-  const noteInputRef = useRef(null);
+
   const BASE_URL = "http://10.1.11.55:8081/api/presensi";
 
-  useEffect(() => {
-  const fetchStatusAbsen = async () => {
-    const response = await fetch(`${BASE_URL}/status/${userData.mhsNim}`);
-    const result = await response.json();
+  // 1. Jika status permission masih loading
+  if (!permission) {
+    return (
+      <View style={styles.container}>
+        <Text>Memuat perizinan kamera...</Text>
+      </View>
+    );
+  }
 
-    if (result?.alreadyPresent === true) {
-      setIsCheckedIn(true);
-    } else {
-      setIsCheckedIn(false);
+  // 2. Jika user belum memberikan izin atau menolak
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.infoText}>
+          Aplikasi butuh akses kamera untuk memindai QR Code Presensi Dosen!
+        </Text>
+        <TouchableOpacity style={styles.buttonRequest} onPress={requestPermission}>
+          <Text style={styles.buttonText}>Aktifkan Kamera</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // 3. Fungsi saat QR Code terdeteksi kamera
+  const handleBarCodeScanned = ({ type, data }) => {
+    if (!isScanning) return;
+    setIsScanning(false);
+
+    try {
+      const qrData = JSON.parse(data);
+      setScannedData(qrData);
+
+      Alert.alert(
+        "QR Code Terdeteksi",
+        `Mata Kuliah: ${qrData.kodeMk}\nPertemuan: ${qrData.pertemuanKe}\nRuangan: ${qrData.ruangan}\n\nLanjutkan Presensi (Check-In)?`,
+        [
+          {
+            text: "Batal",
+            onPress: () => {
+              setIsScanning(true);
+              setScannedData(null);
+            },
+            style: "cancel"
+          },
+          {
+            text: "Ya, Check In",
+            onPress: () => handleSubmitPresensi(qrData)
+          }
+        ]
+      );
+    } catch (error) {
+      Alert.alert("QR Tidak Valid", "Pastikan Anda memindai QR Code Presensi Dosen.");
+      setIsScanning(true);
     }
   };
 
-    if (userData?.mhsNim) {
-      fetchStatusAbsen();
-    }
-  }, [userData]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString("id-ID", { hour12: false }));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const attendanceStats = useMemo(() => {
-    return { totalPresent: 12, totalAbsent: 2 };
-  }, []);
-
-  const handleCheckIn = async () => {
-    if (isCheckedIn) return Alert.alert("Perhatian", "Anda sudah Check In.");
-    if (note.trim() === "") {
-      Alert.alert("Peringatan", "Catatan kehadiran wajib diisi!");
-      noteInputRef.current.focus();
-      return;
-    }
-
-    setIsPosting(true);
-    const now = new Date();
+  const handleSubmitPresensi = async (qrData) => {
     const payload = {
-      kodeMk: "TRPL205",
-      course: "Mobile Programming",
+      kodeMk: qrData.kodeMk,
+      nimMhs: "0325260031",
+      pertemuanKe: qrData.pertemuanKe,
+      date: new Date().toISOString().split('T')[0],
+      jamPresensi: new Date().toLocaleTimeString('en-GB'),
       status: "Present",
-      nimMhs: userData.mhsNim,
-      pertemuanKe: 5,
-      date: now.toISOString().split("T")[0],
-      jamPresensi: now.toLocaleTimeString("id-ID", { hour12: false }),
-      kode_qr: "AUTH-TRPL205-W5-XYZ987",
-      ruangan: "Lab Komputer 3",
-      dosenPengampu: "Tim Dosen TRPL",
-      catatan: note 
+      ruangan: qrData.ruangan
     };
 
     try {
       const response = await fetch(BASE_URL, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  },
-  body: JSON.stringify(payload),
-});
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
 
-const text = await response.text();
-console.log("RAW RESPONSE:", text);
-try {
-  const json = JSON.parse(text);
-  console.log("JSON RESPONSE:", json);
-} catch (e) {
-  console.log("INI BUKAN JSON ❌");
-}
+      const result = await response.json();
 
       if (response.ok) {
-        setIsCheckedIn(true); 
-        Alert.alert("Berhasil!", "Presensi masuk ke Database.", [
-          { text: "Lihat Riwayat", onPress: () => navigation.navigate("History") },
+        setIsCheckedIn(true);
+        Alert.alert("Berhasil!", "Presensi sukses dicatat ke Database.", [
+          { text: "Lihat Riwayat", onPress: () => navigation.navigate('History') }
         ]);
       } else {
-        Alert.alert("Gagal", "Terjadi kesalahan di server.");
+        Alert.alert("Gagal", result.message || "Terjadi kesalahan di server.");
       }
     } catch (error) {
-      Alert.alert("Error Jaringan", "Cek koneksi internet/server.");
+      Alert.alert("Error Jaringan", "Pastikan IP Laptop benar dan API berjalan.");
+      console.error(error);
     } finally {
-      setIsPosting(false);
+      setIsScanning(true);
+      setScannedData(null);
     }
   };
 
+  // 5. Render UI
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>Attendance App</Text>
-          <Text style={styles.clockText}>{currentTime}</Text>
-          <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
-        </View>
+    <View style={styles.container}>
+      <CameraView
+        style={StyleSheet.absoluteFillObject} 
+        facing="back"
+        onBarcodeScanned={isScanning ? handleBarCodeScanned : undefined}
+        barcodeScannerSettings={{
+          barcodeTypes: ["qr"],
+        }}
+      >
 
-        <View style={styles.card}>
-          <View style={styles.icon}>
-            <MaterialIcons name="person" size={40} color="#555" />
+        <View style={styles.overlay}>
+          <View style={styles.unfocusedContainer}></View>
+          
+          <View style={styles.focusedContainer}>
+            <View style={styles.borderCornerTopLeft} />
+            <View style={styles.borderCornerTopRight} />
+            <View style={styles.borderCornerBottomLeft} />
+            <View style={styles.borderCornerBottomRight} />
           </View>
-          <View>
-            <Text style={styles.name}>{userData?.nama || "Danisha Akhmadiani"}</Text>
-            <Text>NIM : {userData?.mhsNim  || "0320240017"}</Text>
-            <Text>Class : Informatika-2A</Text>
-          </View>
-        </View>
 
-        <View style={styles.classCard}>
-          <Text style={styles.subtitle}>Today's Class</Text>
-          <Text>Mobile Programming (TRPL205)</Text>
-          <Text>08:00 - 10:00</Text>
-          <Text>Lab 3</Text>
-
-          {!isCheckedIn && (
-            <TextInput
-              ref={noteInputRef}
-              style={styles.inputCatatan}
-              placeholder="Tulis catatan (Contoh: Hadir)"
-              value={note}
-              onChangeText={setNote}
-            />
-          )}
-
-          {isPosting ? (
-            <ActivityIndicator size="large" color="#0056A0" style={{ marginTop: 15 }} />
-          ) : (
-            <TouchableOpacity
-              style={[styles.button, isCheckedIn ? styles.buttonDisabled : styles.buttonActive]}
-              onPress={handleCheckIn}
-              disabled={isCheckedIn}
-            >
-              <Text style={styles.buttonText}>
-                {isCheckedIn ? "CHECKED IN" : "CHECK IN SEKARANG"}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.statsCard}>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{attendanceStats.totalPresent}</Text>
-            <Text style={styles.statLabel}>Total Present</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={[styles.statNumber, { color: "red" }]}>
-              {attendanceStats.totalAbsent}
-            </Text>
-            <Text style={styles.statLabel}>Total Absent</Text>
+          <View style={styles.unfocusedContainer}>
+            <Text style={styles.scanText}>Arahkan Kamera ke QR Code Dosen</Text>
+            {!isScanning && (
+              <Button title="Scan Lagi" onPress={() => setIsScanning(true)} color="#ffc107" />
+            )}
           </View>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      </CameraView>
+    </View>
   );
-};
+}
 
+// 6. Styling
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F5F5" },
-  content: { padding: 20 },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-  title: { fontSize: 24, fontWeight: "bold", color: "#0056A0" },
-  clockText: { fontSize: 16, color: "#666", fontWeight: "500" },
-  logoutButton: { marginLeft: 12, backgroundColor: "#d9534f", paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6 },
-  logoutText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
-  card: { backgroundColor: "white", padding: 20, borderRadius: 12, flexDirection: "row", alignItems: "center", marginBottom: 20, elevation: 3 },
-  icon: { marginRight: 15, backgroundColor: "#F0F0F0", padding: 10, borderRadius: 30 },
-  name: { fontSize: 18, fontWeight: "bold", color: "#333" },
-  classCard: { backgroundColor: "white", padding: 20, borderRadius: 12, marginBottom: 20, elevation: 3 },
-  subtitle: { fontSize: 18, fontWeight: "bold", marginBottom: 10, color: "#333" },
-  inputCatatan: { borderWidth: 1, borderColor: "#DDD", borderRadius: 8, padding: 10, marginTop: 15, marginBottom: 15 },
-  button: { padding: 15, borderRadius: 8, alignItems: "center", marginTop: 10 },
-  buttonActive: { backgroundColor: "#0056A0" },
-  buttonDisabled: { backgroundColor: "#CCC" },
-  buttonText: { color: "white", fontWeight: "bold", fontSize: 16 },
-  statsCard: { flexDirection: "row", justifyContent: "space-between", marginBottom: 30 },
-  statBox: { backgroundColor: "white", padding: 20, borderRadius: 12, alignItems: "center", width: "48%", elevation: 2 },
-  statNumber: { fontSize: 24, fontWeight: "bold", color: "green" },
-  statLabel: { fontSize: 12, color: "#777", marginTop: 5 },
-});
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+  },
+  infoText: {
+    color: 'white',
+    textAlign: 'center',
+    margin: 30,
+    fontSize: 16,
+  },
+  buttonRequest: {
+    backgroundColor: '#0056b3',
+    padding: 15,
+    borderRadius: 10,
+    alignSelf: 'center',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  unfocusedContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  focusedContainer: {
+    width: 250, 
+    height: 250,
+    alignSelf: 'center',
+    backgroundColor: 'transparent',
+    position: 'relative',
+  },
+  scanText: {
+    color: 'white',
+    fontSize: 16,
+    marginTop: 20,
+    fontWeight: 'bold',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 10,
+    borderRadius: 5,
+  },
 
-export default HomeScreen;
+  borderCornerTopLeft: {
+    position: 'absolute', top: 0, left: 0, width: 40, height: 40,
+    borderTopWidth: 5, borderLeftWidth: 5, borderColor: '#007bff',
+  },
+  borderCornerTopRight: {
+    position: 'absolute', top: 0, right: 0, width: 40, height: 40,
+    borderTopWidth: 5, borderRightWidth: 5, borderColor: '#007bff',
+  },
+  borderCornerBottomLeft: {
+    position: 'absolute', bottom: 0, left: 0, width: 40, height: 40,
+    borderBottomWidth: 5, borderLeftWidth: 5, borderColor: '#007bff',
+  },
+  borderCornerBottomRight: {
+    position: 'absolute', bottom: 0, right: 0, width: 40, height: 40,
+    borderBottomWidth: 5, borderRightWidth: 5, borderColor: '#007bff',
+  },
+});
